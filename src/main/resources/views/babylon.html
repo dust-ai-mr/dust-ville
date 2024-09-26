@@ -1,0 +1,998 @@
+<!--
+  ~
+  ~  Copyright 2024 Alan Littleford
+  ~
+  ~  Licensed under the Apache License, Version 2.0 (the "License");
+  ~  you may not use this file except in compliance with the License.
+  ~  You may obtain a copy of the License at
+  ~
+  ~  https://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~  Unless required by applicable law or agreed to in writing, software
+  ~  distributed under the License is distributed on an "AS IS" BASIS,
+  ~  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~  See the License for the specific language governing permissions and
+  ~  limitations under the License.
+  ~
+  ~
+  -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DustVille</title>
+    <style>
+        body,#renderCanvas { width: 100%; height: 100%;}
+    </style>
+
+    <script src="/scripts/babylon/babylon.js"></script>
+    <script src="/scripts/babylon/babylonjs.materials.min.js"></script>
+    <script src="/scripts/babylon/babylonjs.serializers.min.js"></script>
+    <script src="/scripts/babylon/babylonjs.loaders.min.js"></script>
+    <script src="/scripts/babylon/earcut.min.js"></script>
+    <script src="/scripts/babylon/babylon.fireProceduralTexture.min.js"></script>
+    <script src="/scripts/babylon/babylon.gui.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.3.3/dist/echarts.min.js"></script>
+    <script src="/scripts/TreeGenerator.js"></script>
+    <script src="/scripts/tablet.js"></script>
+    <script>
+
+
+        var webSocket = new WebSocket("ws://localhost:9091/");
+        var houseMesh, buggyMesh, treeMesh;
+        var inited = false;
+        var lastSignUpdate = 0;
+        var carAnimations = {}, birdAnimations = {};
+        var gl, hl;
+        var powerPlant, lamp, dayLight, lampLight, skyboxMaterial, skybox;
+        var weather = null;
+        var shiftKeyDown = false, ctrlKeyDown = false;
+        var myChart, chartplane, echartsCanvas;
+        var camera, lastClickX, lastClickZ;
+        var totalCars = {};
+        var currentTime = "", currentNews = "";
+
+        // Birds
+        var hoods = {};
+        var birdMesh; // Mesh to be instanced
+
+        // Colors
+
+        const yellowCol = new BABYLON.Color3.Yellow;
+        const redCol = new BABYLON.Color3.Red;
+        const greenCol = new BABYLON.Color3(0, 1, 0);
+        const whiteCol = new BABYLON.Color3.White;
+
+        var fireMaterial, fireTexture, powerMaterial, powerLoad = 0;
+
+        const frameRate = 10;
+
+        const xSlide = new BABYLON.Animation("xSlide", "position.x", frameRate, BABYLON.Animation.ANIMATIONTYPE_FLOAT, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+        const ySlide = new BABYLON.Animation("ySlide", "position.y", frameRate, BABYLON.Animation.ANIMATIONTYPE_FLOAT, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+        const zSlide = new BABYLON.Animation("zSlide", "position.z", frameRate, BABYLON.Animation.ANIMATIONTYPE_FLOAT, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+
+        /**
+         * Map of road name -> maps -- keys:
+         *  startX, startY, endX, endY  ..start and end coords of the road
+         *  mesh - the mesh representing the road
+         *  cars -- map of carid -> carinfo
+         */
+        var roads = {};
+
+        /**
+         * Web socket handler
+         */
+        webSocket.onopen = function(e) {
+            webSocket.send( JSON.stringify({ type: "setup" }));
+        }
+
+        webSocket.onclose = function () {
+            alert("WebSocket connection closed")
+        };
+
+        webSocket.onmessage = function (msg) {
+            const data = JSON.parse(msg.data);
+            switch(data.type)
+            {
+                case "msg":
+                    console.log(data);
+                    break
+
+                case "setup":
+                    setup(data);
+                    break;
+
+                case "roads":
+                    if (inited && null !== buggyMesh) {
+                        updateRoad(data.value);
+                    }
+                    break
+
+                case "load":
+                    powerLoad = data.value;
+                    if (powerLoad > 22000) {
+                        powerPlant.material = fireMaterial;
+                    } else if (powerLoad > 18000) {
+                        powerPlant.material = powerMaterial;
+                        powerPlant.material.diffuseColor =  redCol;
+                    } else if (powerLoad > 10000) {
+                        powerPlant.material = powerMaterial;
+                        powerPlant.material.diffuseColor =  yellowCol;
+                    } else if (powerLoad > 5000) {
+                        powerPlant.material = powerMaterial;
+                        powerPlant.material.diffuseColor =  greenCol;
+                    } else {
+                        powerPlant.material = powerMaterial;
+                        powerPlant.material.diffuseColor =  whiteCol;
+                    }
+                    updateSign();
+                    break
+
+                case "houseload":
+                    var houseload = data.value;
+                    var mesh = scene.getNodeByName(houseload.name);
+                    if (houseload.load > 20) {
+                        hl.addMesh(mesh, redCol);
+                    }
+                    else {
+                        hl.removeMesh(mesh);
+                    }
+                    break
+
+                case "weather":
+                    weather = data.value;
+                    updateSign();
+                    updateLight();
+                    break
+
+                case "stats":
+                    var stats = data.value;
+                    console.log(stats);
+                    plot(stats, chartplane);
+                    break
+
+                case "dropcar":
+                    scene.getNodeByName(data.value).dispose();
+                    break
+
+                case "hood":
+                    updateHood(data.value);
+                    break
+
+                case "time":
+                    currentTime = data.value;
+                    updateSign();
+                    break
+
+                case "news":
+                    currentNews = data.value;
+                    break
+            }
+        };
+
+        /**
+         * Build and lay out everything that needs building
+         * @param data
+         */
+        function setup(data) {
+            // Build roads
+            let index = 0;
+            data.roads.forEach(function(startandend) {
+                var road = new Map();
+                road.startX = startandend[0];
+                road.startY = startandend[1];
+                road.endX = startandend[2];
+                road.endY = startandend[3];
+                road.cars = new Map();
+                road.lastUpdate = 0;
+                road.closed = false;
+
+                const name = "road" + index++;
+                var length = Math.sqrt((road.startX - road.endX)**2 + (road.startY - road.endY)**2);
+                var mesh = BABYLON.MeshBuilder.CreateBox(name, {height: 0.1, width: length, depth: 10}, scene);
+                var angle = Math.asin((road.endY - road.startY) / length);
+
+
+                for (let i = 0; (50 * (i + 2)) < length; ++i) {
+                    let newlamp = lamp.clone();
+                    newlamp.parent = mesh;
+                    newlamp.position.x = 50 + (-length / 2) + 50 * i;
+                    newlamp.position.y = 0;
+                    newlamp.position.z = 6; // Lamp was rotated
+                    newlamp.setEnabled(true);
+                }
+
+                mesh.material = new BABYLON.StandardMaterial(scene);
+                if (road.startX < 0) angle = -angle;
+                mesh.rotate(BABYLON.Axis.Y, angle, BABYLON.Space.LOCAL);
+
+                mesh.position.x = road.startX + (road.endX - road.startX) / 2;
+                mesh.position.z = road.startY + (road.endY - road.startY) / 2;
+                mesh.material.maxSimultaneousLights = 12;
+                mesh.material.emissive = yellowCol;
+                road.mesh = mesh;
+                roads[name] = road;
+            });
+
+            // Intersections
+            data.intersections.forEach(function(startend) {
+                const x = startend[0], y = startend[1];
+                const mesh = BABYLON.MeshBuilder.CreateCylinder("intersection_" + x + "_" + y, {height:0.1, diameter:50}, scene);
+                mesh.position.x = x;
+                mesh.position.z = y;
+            });
+
+            // Power plant
+            powerPlant =  BABYLON.MeshBuilder.CreateCylinder("powerstation", { height:200, diameterBottom:25, diameterTop: 100 }, scene);
+            powerPlant.material = new BABYLON.StandardMaterial(scene);
+            powerPlant.material.diffuseColor = whiteCol;
+
+            powerPlant.position.x = 300;
+            powerPlant.position.y = 100;
+            powerPlant.position.z = 300;
+
+            // Fire material for overloaded power station
+            fireMaterial = new BABYLON.StandardMaterial("fontainSculptur2", scene);
+            fireTexture = new BABYLON.FireProceduralTexture("fire", 256, scene);
+            fireMaterial.diffuseTexture = fireTexture;
+            fireMaterial.opacityTexture = fireTexture;
+            powerMaterial = new BABYLON.StandardMaterial(scene);
+
+            // Houses
+            for(let i = 0; i < data.numhouses; ++i) {
+                var house = houseMesh.clone("house" + i);
+                house.position.x = 100 + 30 * (i % 10);
+                house.position.z = 40 + 30 * Math.floor(i / 10);
+                house.setEnabled(true);
+            }
+
+            inited = true;
+
+            // Periodically ping server to keep websocket open
+            window.setInterval(() => { webSocket.send( JSON.stringify({ type: "ping" }))}, 5*1000);
+
+
+            // Place to put charts
+            chartplane = BABYLON.MeshBuilder.CreateCylinder("chartplane",
+                {arc: 0.3, cap: BABYLON.Mesh.NO_CAP, sideOrientation: 2, diameter: 120, height: 20}
+            );
+            chartplane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_Y; // Always face camera
+            chartplane.position = new BABYLON.Vector3(0, 10, 50);
+            chartplane.setEnabled(false);
+
+
+            // Birds
+            birdMesh =  BABYLON.MeshBuilder.CreateBox("", { size: 0.5 });
+            birdMesh.setEnabled(false);
+
+        }
+
+        // Regular updates driven from server ==========================================================================
+
+        /**
+         * We can fall behind our 500ms period of updates. If we are processing the same road within
+         * 250ms of the last time then skip it so we can catch back up -- otherwise we slowly choke
+         * @param road
+         */
+        function updateRoad(road)
+        {
+            const now = Date.now();
+            const name = "road" + road.index;
+            let myRoad = roads[name];
+
+            totalCars[name] = road.cars.coming.length + road.cars.going.length;
+
+            if (now - myRoad.lastUpdate > 250) {
+                road.cars.coming.forEach(function(car, key) {
+                    updateCar(car);
+
+                });
+                road.cars.going.forEach(function(car, key) {
+                    updateCar(car);
+                });
+                road.cars.charging.forEach(function(car, key) {
+                    updateCar(car);
+                });
+
+                if (! myRoad.closed) {
+                    if (road.density > 0.1) {
+                        scene.getNodeByName(name).material.diffuseColor = yellowCol;
+                    } else
+                        scene.getNodeByName(name).material.diffuseColor = greenCol;
+                } else {
+                    // console.log(name + "=" + myRoad.closed);
+                    scene.getNodeByName(name).material.diffuseColor = redCol;
+                }
+            } else
+                console.log("Skipping update" + Date.now() + " Msg: " + road.time);
+            myRoad.lastUpdate = now;
+        }
+
+        /**
+         * Updating the car is basically setting up an animation to get it to its 'next spot'.
+         * We have a frameRate of 10fps and we animate for 6 frames. Since we are pushing data every 500ms
+         * this gives us a little leeway so we don't stutter too much.
+         * @param car
+         */
+        function updateCar(car) {
+            const name = "car" + car.id;
+            var buggy = scene.getNodeByName(name);
+
+            if (null === buggy) {
+                buggy = buggyMesh.clone(name);
+                buggy.setEnabled(true);
+                buggy.position.x = car.point.x;
+                buggy.position.z = car.point.y;
+            }
+            else {
+
+                const xKeyFrames = [], zKeyFrames = [];
+
+                xKeyFrames.push({
+                    frame: 0,
+                    value: buggy.position.x
+                });
+
+                xKeyFrames.push({
+                    frame: 6,
+                    value: car.point.x
+                });
+
+                zKeyFrames.push({
+                    frame: 0,
+                    value: buggy.position.z
+                });
+
+                zKeyFrames.push({
+                    frame: 6,
+                    value: car.point.y
+                });
+
+                var cxSlide = xSlide.clone(), czSlide = zSlide.clone();
+                cxSlide.setKeys(xKeyFrames);
+                czSlide.setKeys(zKeyFrames);
+
+                if (carAnimations[car.id])
+                    carAnimations[car.id].stop();
+                buggy.animations = [cxSlide, czSlide];
+
+                carAnimations[car.id] = scene.beginAnimation(buggy, 0, frameRate, false);
+            }
+            // Make sure our angle matches Actor's car angle
+            // Todo: this needs work
+            var currentAngle = buggy.rotationQuaternion.toEulerAngles()._y, requiredAngle = car.angle;
+            buggy.rotate(BABYLON.Axis.Z, requiredAngle - currentAngle , BABYLON.Space.LOCAL);
+
+            // Glow if charging
+            if (car.charging) {
+                gl.removeExcludedMesh(buggy);
+                gl.addIncludedOnlyMesh(buggy);
+            }
+            else {
+                gl.addExcludedMesh(buggy);
+                gl.removeIncludedOnlyMesh(buggy);
+            }
+        }
+
+        /**
+         * Use watts/m^2 as a proxy for the amount of daylight but note this will get modified by manualIntensity
+         * which is a factor between 0 and 1.
+         *
+         * dayLightIntensity ~  0 - 2
+         */
+        async function updateLight() {
+            dayLight.intensity = Math.max(Math.min(1.5, 0.5 * Math.log10(weather.solarRadiation)), 0.1);
+            lampLight.intensity = 1 - dayLight.intensity;
+            if (dayLight.intensity < 0.2) {
+                skybox.setEnabled(false);
+            }
+            else {
+                skybox.setEnabled(true);
+            }
+            console.log("Current intensity = " + dayLight.intensity);
+        }
+
+        function updateHood(hood)
+        {
+            const name = hood.name;
+            const thisHood = hoods[name];
+            const now = Date.now();
+
+            if (! thisHood) {
+                hoods[name] = now;
+            }
+
+            if (hood.ts - hoods[name] > 250) {
+                hood.birds.forEach(function(bird) {
+                    var name = bird.name;
+                    var mesh = scene.getNodeByName(name);
+
+                    if (null === mesh) {
+                        mesh = birdMesh.createInstance(name);
+                        mesh.setEnabled(true);
+                        mesh.position.x = bird.position.x;
+                        mesh.position.y = bird.position.z;
+                        mesh.position.z = bird.position.y;
+                    }
+                    else {
+                        const xKeyFrames = [], yKeyFrames = [], zKeyFrames = [];
+
+                        xKeyFrames.push({
+                            frame: 0,
+                            value: mesh.position.x
+                        });
+
+                        xKeyFrames.push({
+                            frame: 10,
+                            value: bird.position.x
+                        });
+
+                        yKeyFrames.push({
+                            frame: 0,
+                            value: mesh.position.y
+                        });
+
+                        yKeyFrames.push({
+                            frame: 10,
+                            value: bird.position.z
+                        });
+
+                        zKeyFrames.push({
+                            frame: 0,
+                            value: mesh.position.z
+                        });
+
+                        zKeyFrames.push({
+                            frame: 10,
+                            value: bird.position.y
+                        });
+
+                        var cxSlide = xSlide.clone(), cySlide = ySlide.clone(), czSlide = zSlide.clone();
+
+                        cxSlide.setKeys(xKeyFrames);
+                        cySlide.setKeys(yKeyFrames);
+                        czSlide.setKeys(zKeyFrames);
+
+                        if (birdAnimations[name])
+                            birdAnimations[name].stop();
+
+                        mesh.animations = [cxSlide, cySlide, czSlide];
+
+                        birdAnimations[name] = scene.beginAnimation(mesh, 0, frameRate, false);
+                    }
+                })
+            } else
+                console.log("Skipping update of " + name);
+
+            hoods[name] = now;
+        }
+
+        // Builders for various assets in the scene ====================================================================
+        const buildCar = () => {
+
+            //base
+            const outline = [
+                new BABYLON.Vector3(-0.3, 0, -0.1),
+                new BABYLON.Vector3(0.2, 0, -0.1),
+            ]
+
+            //curved front
+            for (let i = 0; i < 20; i++) {
+                outline.push(new BABYLON.Vector3(0.2 * Math.cos(i * Math.PI / 40), 0, 0.2 * Math.sin(i * Math.PI / 40) - 0.1));
+            }
+
+            //top
+            outline.push(new BABYLON.Vector3(0, 0, 0.1));
+            outline.push(new BABYLON.Vector3(-0.3, 0, 0.1));
+
+            //back formed automatically
+
+            //car face UVs
+            const faceUV = [];
+            faceUV[0] = new BABYLON.Vector4(0, 0.5, 0.38, 1);
+            faceUV[1] = new BABYLON.Vector4(0, 0, 1, 0.5);
+            faceUV[2] = new BABYLON.Vector4(0.38, 1, 0, 0.5);
+
+            //car material
+            const carMat = new BABYLON.StandardMaterial("carMat");
+            carMat.diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/environments/car.png");
+
+            const car = BABYLON.MeshBuilder.ExtrudePolygon("car", {shape: outline, depth: 0.2, faceUV: faceUV, wrap: true});
+            car.material = carMat;
+
+            //wheel face UVs
+            const wheelUV = [];
+            wheelUV[0] = new BABYLON.Vector4(0, 0, 1, 1);
+            wheelUV[1] = new BABYLON.Vector4(0, 0.5, 0, 0.5);
+            wheelUV[2] = new BABYLON.Vector4(0, 0, 1, 1);
+
+            //car material
+            const wheelMat = new BABYLON.StandardMaterial("wheelMat");
+            wheelMat.diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/environments/wheel.png");
+
+            const wheelRB = BABYLON.MeshBuilder.CreateCylinder("", {diameter: 0.125, height: 0.05, faceUV: wheelUV})
+            wheelRB.material = wheelMat;
+            wheelRB.parent = car;
+            wheelRB.position.z = -0.1;
+            wheelRB.position.x = -0.2;
+            wheelRB.position.y = 0.035;
+
+            wheelRF = wheelRB.clone("");
+            wheelRF.position.x = 0.1;
+
+            wheelLB = wheelRB.clone("");
+            wheelLB.position.y = -0.2 - 0.035;
+
+            wheelLF = wheelRF.clone("");
+            wheelLF.position.y = -0.2 - 0.035;
+            car.rotate(BABYLON.Axis.X, -Math.PI/2, BABYLON.Space.WORLD)
+            car.material.emissiveColor = new BABYLON.Color3(1, 1, 1);
+            return car;
+        }
+
+        /**
+         * A house is a box and a roof
+         * @param width
+         * @returns {*}
+         */
+        const buildHouse = (width) => {
+            const box = buildBox(width);
+            const roof = buildRoof(width);
+
+            var mesh =  BABYLON.Mesh.MergeMeshes([box, roof], true, false, null, false, true);
+            mesh.scaling.x = 7;
+            mesh.scaling.y = 7;
+            mesh.scaling.z = 7;
+            mesh.setEnabled(false);
+            return mesh;
+
+        }
+
+        const buildBox = (width) => {
+            //texture
+            const boxMat = new BABYLON.StandardMaterial("boxMat");
+            if (width == 2) {
+                boxMat.diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/environments/semihouse.png")
+            }
+            else {
+                boxMat.diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/environments/cubehouse.png");
+            }
+
+            //options parameter to set different images on each side
+            const faceUV = [];
+            if (width == 2) {
+                faceUV[0] = new BABYLON.Vector4(0.6, 0.0, 1.0, 1.0); //rear face
+                faceUV[1] = new BABYLON.Vector4(0.0, 0.0, 0.4, 1.0); //front face
+                faceUV[2] = new BABYLON.Vector4(0.4, 0, 0.6, 1.0); //right side
+                faceUV[3] = new BABYLON.Vector4(0.4, 0, 0.6, 1.0); //left side
+            }
+            else {
+                faceUV[0] = new BABYLON.Vector4(0.5, 0.0, 0.75, 1.0); //rear face
+                faceUV[1] = new BABYLON.Vector4(0.0, 0.0, 0.25, 1.0); //front face
+                faceUV[2] = new BABYLON.Vector4(0.25, 0, 0.5, 1.0); //right side
+                faceUV[3] = new BABYLON.Vector4(0.75, 0, 1.0, 1.0); //left side
+            }
+            // top 4 and bottom 5 not seen so not set
+
+            /**** World Objects *****/
+            const box = BABYLON.MeshBuilder.CreateBox("box", {width: width, faceUV: faceUV, wrap: true});
+            box.material = boxMat;
+            box.position.y = 0.5;
+
+            return box;
+        }
+
+        const buildRoof = (width) => {
+            //texture
+            const roofMat = new BABYLON.StandardMaterial("roofMat");
+            roofMat.diffuseTexture = new BABYLON.Texture("https://assets.babylonjs.com/environments/roof.jpg");
+
+            const roof = BABYLON.MeshBuilder.CreateCylinder("roof", {diameter: 1.3, height: 1.2, tessellation: 3});
+            roof.material = roofMat;
+            roof.scaling.x = 0.75;
+            roof.scaling.y = width;
+            roof.rotation.z = Math.PI / 2;
+            roof.position.y = 1.22;
+
+            return roof;
+        }
+
+        const buildLamp = () => {
+            //add a spotlight and later after a mesh lamp post and a bulb have been created
+            //then will make the post a parent to the bulb and
+            //the bulb to the parent
+            lampLight = new BABYLON.SpotLight("lampLight", new BABYLON.Vector3(0, 11, 0), new BABYLON.Vector3(0, -1, 0), Math.PI / 2, 1, scene);
+            lampLight.diffuse = BABYLON.Color3.Yellow();
+            lampLight.intensity = 1;
+
+            //shape to extrude
+            const lampShape = [];
+            for(let i = 0; i < 20; i++) {
+                lampShape.push(new BABYLON.Vector3(Math.cos(i * Math.PI / 10), Math.sin(i * Math.PI / 10), 0));
+            }
+            lampShape.push(lampShape[0]); //close shape
+
+            //extrusion path
+            const lampPath = [];
+            lampPath.push(new BABYLON.Vector3(0, 0, 0));
+            lampPath.push(new BABYLON.Vector3(0, 10, 0));
+            for(let i = 0; i < 20; i++) {
+                lampPath.push(new BABYLON.Vector3(1 + Math.cos(Math.PI - i * Math.PI / 40), 10 + Math.sin(Math.PI - i * Math.PI / 40), 0));
+            }
+            lampPath.push(new BABYLON.Vector3(3, 11, 0));
+
+            const yellowMat = new BABYLON.StandardMaterial("yellowMat");
+            yellowMat.emissiveColor = BABYLON.Color3.Yellow();
+
+            //extrude lamp
+            const lamp = BABYLON.MeshBuilder.ExtrudeShape("lamp", {cap: BABYLON.Mesh.CAP_END, shape: lampShape, path: lampPath, scale: 0.5});
+
+            //add bulb
+            const bulb = BABYLON.MeshBuilder.CreateSphere("bulb", {diameterX: 1.5, diameterZ: 0.8});
+
+            bulb.material = yellowMat;
+            bulb.parent = lamp;
+            bulb.position.x = 2;
+            bulb.position.y = 10.5;
+
+            lampLight.parent = bulb;
+            lamp.setEnabled(false);
+            return lamp;
+        }
+
+        const buildTree = (scene) => {
+            var green = new BABYLON.StandardMaterial("green", scene);
+            green.diffuseColor = new BABYLON.Color3(0,1,0);
+
+            //trunk and branch material
+            var bark = new BABYLON.StandardMaterial("bark", scene);
+            bark.emissiveTexture = new BABYLON.Texture("https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Bark_texture_wood.jpg/800px-Bark_texture_wood.jpg", scene);
+            bark.diffuseTexture = new BABYLON.Texture("https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/Bark_texture_wood.jpg/800px-Bark_texture_wood.jpg", scene);
+            bark.diffuseTexture.uScale = 2.0;//Repeat 5 times on the Vertical Axes
+            bark.diffuseTexture.vScale = 2.0;//Repeat 5 times on the Horizontal Axes
+
+            //Tree parameters
+            var trunk_height = 20;
+            var trunk_taper = 0.6;
+            var trunk_slices = 5;
+            var boughs = 2; // 1 or 2
+            var forks = 4;
+            var fork_angle = Math.PI/4;
+            var fork_ratio = 2/(1+Math.sqrt(5)); //PHI the golden ratio
+            var branch_angle = Math.PI/3;
+            var bow_freq = 2;
+            var bow_height = 3.5;
+            var branches = 10;
+            var leaves_on_branch = 5;
+            var leaf_wh_ratio = 0.5;
+
+            var tree = createTree(trunk_height, trunk_taper, trunk_slices, bark, boughs, forks, fork_angle, fork_ratio, branches, branch_angle, bow_freq, bow_height, leaves_on_branch, leaf_wh_ratio, green, scene);
+            tree.position.y = -10;
+            tree.setEnabled(false);
+            return tree;
+        }
+    </script>
+</head>
+<body>
+<canvas id="renderCanvas" style="width:100%; height: 100%"></canvas>
+<script>
+
+    // Build the scene =================================================================================================
+    // We build prototypes of cars and houses which we clone during setup and update processes
+
+    const canvas = document.getElementById("renderCanvas");
+    const engine = new BABYLON.Engine(canvas, true,  { stencil: true,  disableWebGL2Support: false });
+
+    var createScene = function () {
+        // This creates a basic Babylon Scene object (non-mesh)
+        var scene = new BABYLON.Scene(engine);
+
+        camera = new BABYLON.UniversalCamera("UniversalCamera", new BABYLON.Vector3(0, 0, -10), scene);
+        camera.attachControl(canvas, true);
+        camera.position.y = 6;
+        camera.inputs.addMouseWheel();
+
+        dayLight = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(1, 1, 0));
+
+        // Glow layer for charging cars
+        gl = new BABYLON.GlowLayer("glow", scene, {
+            mainTextureSamples: 4
+        });
+
+        // Highlight layer for outlining houses
+        hl = new BABYLON.HighlightLayer("hl1", scene);
+
+        dayLight.intensity = 1;
+
+        buggyMesh = buildCar();
+        buggyMesh.scaling.x = 10;
+        buggyMesh.scaling.y = 10;
+        buggyMesh.scaling.z = 10;
+        buggyMesh.position.y = 2;
+
+        buggyMesh.setEnabled(false); // Don't display - we will clone this
+
+        // Our built-in 'ground' shape.
+        var ground = BABYLON.MeshBuilder.CreateGround("ground", {width: 1200, height: 1400, subdivisions: 100}, scene);
+        ground.material = new BABYLON.GridMaterial("groundMaterial", scene);
+
+        houseMesh = buildHouse(2);
+        houseMesh.setEnabled(false);
+
+        lamp = buildLamp();
+
+        lamp.rotation = BABYLON.Vector3.Zero();
+        lamp.rotation.y = Math.PI / 2;
+        lamp.scaling.x = lamp.scaling.y = lamp.scaling.z = 0.75;
+        //lamp.setEnabled(false);
+
+        treeMesh = buildTree(scene);
+
+        for (var i = 0; i < 50; ++i) {
+            var tree = treeMesh.clone("");
+
+            tree.position.x = -450 + Math.random() * 200;
+            tree.position.z = Math.random() * 200;
+            tree.setEnabled(true);
+        }
+
+        /**
+         * Handle pointer (left mouse) click. For now only applies to roads and we flip the road closed flag
+         * and send the update to the server
+         */
+        scene.onPointerObservable.add((pointerInfo) => {
+            switch (pointerInfo.type)
+            {
+                case BABYLON.PointerEventTypes.POINTERDOWN:
+                    if (pointerInfo.pickInfo.hit) {
+                        const name = pointerInfo.pickInfo.pickedMesh.name;
+                        var pos = pointerInfo.pickInfo.pickedPoint;
+                        lastClickX = pos._x;
+                        lastClickZ = pos._z;
+
+                        if (shiftKeyDown) {
+                            if (
+                                name.startsWith("road") ||
+                                name.startsWith("intersection") ||
+                                name.startsWith("house") ||
+                                name.startsWith("car") ||
+                                name === "powerstation")
+                            {
+                                webSocket.send(JSON.stringify({
+                                    type: "stats",
+                                    name: name
+                                }));
+                                console.log(name);
+                            }
+                        }
+                        else if (name.startsWith("road")) {
+                            var myRoad = roads[name];
+                            myRoad.closed = ! myRoad.closed;
+                            webSocket.send(JSON.stringify({type: "closure", name: name, closed: myRoad.closed}));
+                        }
+                        else if (name === "chartplane") {
+                            chartplane.setEnabled(false);
+                        }
+                        else if (name === "ground") {
+                            if (ctrlKeyDown) {
+                                camera.position.x = lastClickX;
+                                camera.position.z = lastClickZ;
+                                camera.position.y = 6;
+                            }
+                        }
+                    }
+                    break;
+
+                case BABYLON.PointerEventTypes.POINTERUP:
+                    break;
+
+                case BABYLON.PointerEventTypes.POINTERMOVE:
+                    break;
+            }
+        });
+
+        scene.onKeyboardObservable.add((kbInfo) => {
+            switch (kbInfo.type) {
+                case BABYLON.KeyboardEventTypes.KEYDOWN:
+                    if ('Shift' === kbInfo.event.key)
+                        shiftKeyDown = true;
+                    else if ('Control' === kbInfo.event.key)
+                        ctrlKeyDown = true;
+                    break;
+
+                case BABYLON.KeyboardEventTypes.KEYUP:
+                    if ('Shift' === kbInfo.event.key)
+                        shiftKeyDown = false;
+                    else if ('Control' === kbInfo.event.key)
+                        ctrlKeyDown = false;
+                    break;
+            }
+        });
+
+        GUI();
+
+        // Skybox
+        skybox = BABYLON.MeshBuilder.CreateBox("skyBox", {size:4000.0}, scene);
+        skyboxMaterial = new BABYLON.StandardMaterial("skyBox", scene);
+        skyboxMaterial.backFaceCulling = false;
+        skyboxMaterial.reflectionTexture = new BABYLON.CubeTexture("/static/skybox", scene);
+        skyboxMaterial.reflectionTexture.coordinatesMode = BABYLON.Texture.SKYBOX_MODE;
+        skyboxMaterial.disableLighting = true;
+        skybox.material = skyboxMaterial;
+
+        echartsCanvas = document.createElement("canvas");
+        echartsCanvas.width = 3072;
+        echartsCanvas.height = 1024;
+        echartsCanvas.style.width = echartsCanvas.width + "px";
+        echartsCanvas.style.height = echartsCanvas.height + "px";
+
+        myChart = echarts.init(echartsCanvas);
+
+        // Optimizations
+        scene.autoClear = false; // Color buffer
+        scene.autoClearDepthAndStencil = false; // Depth and stencil, obviously
+
+        return scene;
+    };
+
+    function GUI() {
+
+        const adt = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("UI");
+
+        const panel = new BABYLON.GUI.StackPanel();
+        panel.width = "220px";
+        panel.top = "-25px";
+        panel.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_RIGHT;
+        panel.verticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_BOTTOM;
+        adt.addControl(panel);
+
+        const header = new BABYLON.GUI.TextBlock();
+        header.text = "Night      Day";
+        header.height = "30px";
+        header.color = "white";
+        panel.addControl(header);
+
+        const slider = new BABYLON.GUI.Slider();
+        slider.minimum = 0;
+        slider.maximum = 1;
+        slider.borderColor = "black";
+        slider.color = "gray";
+        slider.background = "white";
+        slider.value = 1;
+        slider.height = "20px";
+        slider.width = "200px";
+
+        slider.onValueChangedObservable.add((value) => {
+            webSocket.send( JSON.stringify({ type: "daylight", value: value }));
+        });
+        panel.addControl(slider);
+
+        const helpButton = BABYLON.GUI.Button.CreateSimpleButton("", "Help");
+        panel.addControl(helpButton);
+        var text1 = new BABYLON.GUI.TextBlock();
+        //text1.text = "Help";
+        text1.color = "white";
+        text1.fontSize = 18;
+        helpButton.content = text1;
+
+        helpButton.width = 0.2;
+        helpButton.height = "40px";
+        helpButton.width = "160px";
+        helpButton.color = "white";
+        helpButton.background = "gray";
+
+        helpButton.onPointerClickObservable.add((info) => { alert(
+            "Scroll Wheel - Zoom\n" +
+            "Click - If clicked on road then open/close the road\n" +
+            "Click-Drag - Pan Camera\n" +
+            "Ctrl-Click - If clicked on ground jump to clicked spot\n" +
+            "Shift-Click - Dynamic Data behind the clicked object\n" +
+            "Night-Day slider - Modifies real-time weather station data\n" +
+            'Arrow keys - move in the key direction'
+        ); });
+
+        const infoButton = BABYLON.GUI.Button.CreateSimpleButton("", "Overview");
+        panel.addControl(infoButton);
+        var text2 = new BABYLON.GUI.TextBlock();
+        text2.color = "white";
+        text2.fontSize = 18;
+        infoButton.content = text2;
+
+        infoButton.width = 0.2;
+        infoButton.height = "40px";
+        infoButton.width = "160px";
+        infoButton.color = "white";
+        infoButton.background = "gray";
+
+        infoButton.onPointerClickObservable.add((info) => {
+            window.open("/views/info.html");
+        });
+
+        const paperButton = BABYLON.GUI.Button.CreateSimpleButton("", "White Paper");
+        panel.addControl(paperButton);
+        text2 = new BABYLON.GUI.TextBlock();
+        text2.color = "white";
+        text2.fontSize = 18;
+        paperButton.content = text2;
+
+        paperButton.width = 0.2;
+        paperButton.height = "40px";
+        paperButton.width = "160px";
+        paperButton.color = "white";
+        paperButton.background = "gray";
+
+        paperButton.onPointerClickObservable.add((info) => {
+            window.open("/static/dtwins3.pdf");
+        });
+    }
+
+    const plot = (data, chartplane) => {
+        // Specify the configuration items and data for the chart
+        var option = {
+            grid: {
+                left: '5%',
+                right: '5%',
+                top: 100,
+                bottom: 120
+            },
+            title: {
+                text: data.title,
+                textStyle: {fontSize: 30}
+            },
+            tooltip: {},
+            legend: {
+                data: [{
+                    name: data.seriesName,
+                    textStyle: {fontSize: 30}
+                }]
+            },
+            xAxis: {
+                data: data.ts.map(function(e) { return { value: (new Date(e.ts).toLocaleTimeString('en-US')) + " ", textStyle: {fontSize: 16}}}),
+                axisLabel: {
+                    interval: 0,
+                    rotate: 45 //If the label names are too long you can manage this by rotating the label.
+                }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { fontSize: 30 }
+            },
+            series: [
+                {
+                    name: data.seriesName,
+                    type: 'bar',
+                    data: data.ts.map((e) => e.value)
+                }
+            ]
+        }
+        myChart.setOption(option);
+        myChart.on('finished', () => {
+            const echartsTexture = new BABYLON.DynamicTexture("echartsTexture", echartsCanvas, scene, true);
+            const echartsMaterial = new BABYLON.StandardMaterial("echartsMaterial", scene);
+            echartsMaterial.emissiveTexture = echartsTexture;
+            echartsMaterial.diffuseColor = new BABYLON.Color3(0.6, 0.6, 0.6);
+            chartplane.material = echartsMaterial;
+            echartsTexture.update();
+            engine.hideLoadingUI();
+            chartplane.position.x = camera.position.x + (lastClickX - camera.position.x) / 2.0;
+            chartplane.position.z = camera.position.z + (lastClickZ - camera.position.z) / 2.0;
+            chartplane.position.y = 20;
+            chartplane.setEnabled(true);
+            chartplane.rotation.y = 1.2 * Math.PI;
+        });
+
+    }
+
+    var scene = createScene();
+
+    engine.runRenderLoop(function () {
+        scene.render();
+    });
+
+    // Watch for browser/canvas resize events
+    window.addEventListener("resize", function () {
+        engine.resize();
+    });
+</script>
+</body>
+</html>

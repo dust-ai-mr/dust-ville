@@ -1,0 +1,116 @@
+<!--
+  ~
+  ~  Copyright 2024 Alan Littleford
+  ~
+  ~  Licensed under the Apache License, Version 2.0 (the "License");
+  ~  you may not use this file except in compliance with the License.
+  ~  You may obtain a copy of the License at
+  ~
+  ~  https://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~  Unless required by applicable law or agreed to in writing, software
+  ~  distributed under the License is distributed on an "AS IS" BASIS,
+  ~  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~  See the License for the specific language governing permissions and
+  ~  limitations under the License.
+  ~
+  ~
+  -->
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>DustVille - Background</title>
+    <style>
+        li {
+            margin: 10px 200px 10px 0;
+        }
+    </style>
+</head>
+<body background="/static/dust_window_transparent.png" style="padding: 10px 100px 0 30px">
+<h1>Dust</h1>
+<p>
+    Dust is a software platform for building scalable systems based on the Actor paradigm. In particular we have engineered
+    Dust so that it is an ideal platform for creating Digital Twins. A white paper on the technology can be found
+    <a href="/static/dtwins3.pdf">here</a>.
+</p>
+<h1>Actors</h1>
+<p>
+    An Actor is a very lightweight, self-contained software process. Actors work by receiving messages sent to them by other Actors
+    and processing them one at a time. As they do so they may change their internal state. The <i>only</i> way Actors
+    can communicate is via sending and receiving messages - there is no other way to access their internal state.
+</p>
+<p>
+    Actors are distributable and addressable and so a system of communicating Actors may span several hosts - from cloud
+    based servers to small IOT devices, all intercommunicating via messages.
+</p>
+<p>
+    Actors are <b>very</b> light weight. A typical application may have 100,000s of Actors all running simultaneously on
+    quite modest hardware (e.g. a laptop). Actor messages can be delivered at the rate of millions per second.
+</p>
+<h1 style="clear:left">Dustville</h1>
+<p>
+    Dustville is a <i>VERY simple</i> demonstration of the capability of Dust to digitally twin an environment. It was
+    designed to showcase the ideas behind Dust and not be a faithful model of a town or its road systems.
+    In this case we are using both simulated and real-time data to model:
+    <ul>
+        <li>
+            Birds - birds like to flock near the power plant and each of the approximately 100
+            (boxy!) birds is modelled with an Actor. The volume they fly
+            in is divided into 8000 cubes - each with its own Actor. Cube Actors and Bird Actors exchange message - the
+            Cube Actor keeps a track of average motion of the birds in its volume and newly entering birds get given this
+            information so they can try to match it and follow the averages. This simulates the flocking behavior. As
+            birds move between the Cube Actors the Cube Actors send messages to their neighbors to 'hand off' the bird
+            and the bird then starts to follow the motion in its new neighborhood.
+            <br>
+            This behavior is somewhat similar to ...
+        </li>
+        <li>Cars - each Car is represented by a set of Actors which know its position and speed. Part of its predefined
+            behavior is to match speed with the local traffic conditions and periodically to 'go home'. Also the
+            cars are EVs - so they know they have to periodically stop at a charging station</li>
+        <li>
+            Roads - each Road is modelled by Actors - they know where their cars are and how congested the road is. Part
+            of the Road-Actor's state is whether or not the road is open. If it is closed the Road-Actor exchanges messages
+            with Car Actors which might want to enter the road to prevent them from doing so.
+        </li>
+        <li>
+            Intersections - Intersection Actors know which roads converge on them. They also help model EV charging at
+            charging stations on their periphery. As more cars charge the power levels go up and the intersection sends power
+            level messages to ..
+        </li>
+        <li>
+            Power Station - receives power requirement messages from the Charging Station Actors and delivers more power
+            accordingly. This can cause the powerstation to catch fire occasionally because not only are charging stations
+            drawing power but so are
+        </li>
+        <li>
+            Houses - Each House has a solar cells on its roof (which vary from house to house). When the sun is shining Houses
+            deliver power to the power station. Also each House Actor decides whether or not it needs to turn on heating
+            or cooling depending on the internal temperature of the house.
+            Each House Actor models a random degree of insulation and so the internal temperature
+            depends on the external temperature which comes from ..
+        </li>
+        <li>
+            Weather Station - this is a real-time Actor which is taking information (via the Internet) from the
+            weather.com API. It converts temperature and daylight intensity data into Actor messages
+            which it then broadcasts to any other 'interested' Actors - in this case the House and scene Actors.
+            House Actors  use the temperature measurement to model their internal temperature and uses light intensity
+            to determine how much power it is contributing to the power station. The Scene Actor models the lighting for ...
+        </li>
+        <li>
+            The 3D UI - All of the above is taking place in the cloud. Messages being
+            created by these Actors are funneled through a WebSocket to the browser which is simply responsible for
+            rendering the 3D scene. Finally ..
+        </li>
+        <li>
+            We are running an open-source ChatGPT like server. Periodically the TownActor asks the server to
+            provide a new local news story. We had to get AI in here somehow ;)
+        </li>
+
+    </ul>
+</p>
+<p>
+    In total, then, Dustville is modelled by about 10000 individual self-managing Actors and uses a mixture of real-world and
+    simulated data.
+</p>
+</body>
