@@ -1,11 +1,11 @@
 Dustville
 =========
 
-Dustville is a toy digital twinning system using Dust Actors. 
+Dustville is a toy digital twinning system using Dust Actors (see dust-core). 
 
 Be sure to have built dust-core to get dependencies then
 
-    .gradlew run
+    ./gradlew run
 
 After which point your browser at.
 
