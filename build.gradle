@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.mentalresonance.dust'
-version = '1.0.1'
+version = '1.0.2'
 
 repositories {
     mavenLocal()
@@ -24,7 +24,7 @@ dependencies {
     implementation "org.nanohttpd:nanohttpd:2.3.1"
     implementation "org.nanohttpd:nanohttpd-websocket:2.3.1"
 
-    implementation('com.mentalresonance:dust-core:1.0.1')
+    implementation('com.mentalresonance:dust-core:1.0.2')
 
     implementation 'com.google.code.gson:gson:2.10.1'
 }
