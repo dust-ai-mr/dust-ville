@@ -11,5 +11,7 @@ After which point your browser at.
 
 http://localhost:9090/views/babylon.html
 
-Help and a paper describing the structure of the app is available through the UI.
+Help and a paper describing the structure of the app is available through the UI:
+
+<img src="./dustville.png" alt="Image description" width="500px" style="float:left; margin-right: 10px; vertical-align:middle">
 
