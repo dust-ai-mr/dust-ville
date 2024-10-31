@@ -81,7 +81,7 @@ public class BirdActor extends Actor {
 					if (newPosition.equals(position))
 						log.error("Did not move $position");
 
-					// If we are leaving the volume change our direction to fly back in
+					// If we are leaving the 20x20x20  volume change our direction to fly back in
 					if (newPosition.x < 0) direction.setXSign(true);
 					if (newPosition.x > 5 + (SIZE_X-1) * 10) direction.setXSign(false);
 					if (newPosition.y < 0) direction.setYSign(true);

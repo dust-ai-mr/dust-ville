@@ -32,7 +32,7 @@ import static com.mentalresonance.dust.demos.dustville.utils.HoodGeomtery.*
 import java.util.concurrent.ThreadLocalRandom
 
 /**
- * Build a 20x20x20 cube of Neighborhoods. Each is a 10x10x10 unit volume and we identify it by the
+ * Build a 20x20x20 cube of Neighborhoods. Physically each is a 10x10x10 unit volume and we identify it by the
  * 3D coordinates of its center. Each get assigned a HoodActor whose name is hood_x_y_z where x,y,z are the
  * center coordinates. Thus given a position inside this big cube we can easily compute which HoodActor is
  * going to be managing the space around it. Then set up some birds randomly in the cube.
@@ -53,7 +53,7 @@ class BirdsSetup {
 			for (int y = 0; y < SIZE_Y; ++y) {
 				for (int z = 0; z < SIZE_Z; ++z) {
 					int _x = 5 + x * 10, _y =  5 + y * 10,  _z = 5 + z * 10
-					hoods <<context.actorOf(HoodActor.props(new Vector3D(_x, _y, _z)), "hood_${_x}_${_y}_${_z}")
+					hoods << context.actorOf(HoodActor.props(new Vector3D(_x, _y, _z)), "hood_${_x}_${_y}_${_z}")
 				}
 			}
 		}
