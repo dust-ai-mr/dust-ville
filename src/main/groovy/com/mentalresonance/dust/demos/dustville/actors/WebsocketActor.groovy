@@ -135,16 +135,22 @@ class WebsocketActor extends Actor {
 
 				case GetCarsResponseMsg:
 					GetCarsResponseMsg cars = (GetCarsResponseMsg)message
-					if (cars.coming || cars.going || cars.charging)
-						webSocket.send(new Gson().toJson([
-							type: "roads",
-							value:[cars: cars, index: cars.roadId, density: cars.density, time: System.currentTimeMillis()]
-						]))
-					numCars += cars.coming.size() + cars.going.size()
+					try {
 
-					if (++numCarResponses == numRoads) {
-						town.tell(new TotalCarsMsg(numCars), null)
-						numCarResponses = 0
+						if (cars.coming || cars.going || cars.charging)
+							webSocket.send(new Gson().toJson([
+								type: "roads",
+								value:[cars: cars, index: cars.roadId, density: cars.density, time: System.currentTimeMillis()]
+							]))
+						numCars += cars.coming.size() + cars.going.size()
+
+						if (++numCarResponses == numRoads) {
+							town.tell(new TotalCarsMsg(numCars), null)
+							numCarResponses = 0
+						}
+					}
+					catch (Exception e) {
+						log.info "${e.message}"
 					}
 					break
 
@@ -171,7 +177,7 @@ class WebsocketActor extends Actor {
 								ts: System.currentTimeMillis(),
 								name: birds.name,
 								birds: birds.birds.collect {
-									[name: it.name, position: it.position.plus(offset)]
+									[name: it.name(), position: it.position().plus(offset)]
 								}
 							]
 						]))

@@ -19,7 +19,10 @@
 
 package com.mentalresonance.dust.demos.dustville.objects;
 
-public class Point {
+import java.io.Serializable;
+
+// Points are updated a lot so not a record
+public class Point implements Serializable {
 	public double x, y;
 
 	public Point (double x, double y) {

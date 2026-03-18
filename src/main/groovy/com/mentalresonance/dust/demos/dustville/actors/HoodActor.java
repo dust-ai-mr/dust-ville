@@ -119,8 +119,8 @@ public class HoodActor extends Actor {
 					if (flock > 0) {
 						birds.forEach(
 							(String k, Bird bird) -> {
-								averageDirection = averageDirection.plus(bird.direction);
-								averageSpeed += bird.speed;
+								averageDirection = averageDirection.plus(bird.direction());
+								averageSpeed += bird.speed();
 							}
 						);
 						averageDirection = averageDirection.scale(1.0d / flock).normalize();

@@ -21,14 +21,18 @@ package com.mentalresonance.dust.demos.dustville.msgs.cars
 
 import com.mentalresonance.dust.demos.dustville.objects.Car
 import groovy.transform.CompileStatic
+import lombok.Getter
 
 @CompileStatic
 class GetCarsRequestMsg implements Serializable { }
 
 @CompileStatic
+@Getter
 class GetCarsResponseMsg implements Serializable {
 	boolean closed
 	int roadId
 	double density
 	List<Car> going, coming, charging
+
+	GetCarsResponseMsg() {}
 }

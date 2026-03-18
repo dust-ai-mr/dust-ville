@@ -20,6 +20,7 @@
 package com.mentalresonance.dust.demos.dustville
 
 import com.mentalresonance.dust.core.actors.ActorSystem
+import com.mentalresonance.dust.core.actors.ActorSystemBuilder
 import com.mentalresonance.dust.demos.dustville.actors.ServicesActor
 import groovy.util.logging.Slf4j
 
@@ -47,7 +48,7 @@ class Main {
 		else if (System.getenv(WEATHER_STATION_KEY))
 			config[WEATHER_STATION_KEY] = System.getenv(WEATHER_STATION_KEY)
 
-		dustvilleActorSystem = new ActorSystem('dustville')
+		dustvilleActorSystem = new ActorSystemBuilder().name('dustville').build()
 		dustvilleActorSystem.context.actorOf(ServicesActor.props(), "services")
 		new WebServer(port)
 	}

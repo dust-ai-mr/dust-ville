@@ -1,6 +1,6 @@
 /*
  *
- *  Copyright 2024 Alan Littleford
+ *  Copyright 2024-present Alan Littleford
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import com.mentalresonance.dust.core.actors.ActorRef
 import groovy.transform.CompileStatic
 
 @CompileStatic
-class Car {
+class Car implements Serializable {
 
 	int speed, id
 

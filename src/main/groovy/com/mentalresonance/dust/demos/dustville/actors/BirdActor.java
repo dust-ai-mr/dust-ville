@@ -53,9 +53,9 @@ public class BirdActor extends Actor {
 	}
 
 	public BirdActor(Bird bird) {
-		position = bird.position;
-		direction = bird.direction;
-		speed = bird.speed;
+		position = bird.position();
+		direction = bird.direction();
+		speed = bird.speed();
 	}
 
 	@Override

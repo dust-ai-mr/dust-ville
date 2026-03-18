@@ -1,6 +1,6 @@
 /*
  *
- *  Copyright 2024 Alan Littleford
+ *  Copyright 2024-present Alan Littleford
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,17 +26,4 @@ import com.mentalresonance.dust.demos.dustville.utils.Vector3D;
 /**
  * Bird contains instantaneous state of bird
  */
-public class Bird implements Serializable {
-
-	public String name;
-	public Vector3D position; // Current position
-	public Vector3D direction; // Of flight
-	public Double speed; // Along direction
-
-	public Bird(String name, Vector3D position, Vector3D direction, Double speed) {
-		this.name = name;
-		this.position = position;
-		this.direction = direction;
-		this.speed = speed;
-	}
-}
+public record Bird(String name, Vector3D position, Vector3D direction, Double speed) implements Serializable { }

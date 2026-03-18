@@ -5,7 +5,7 @@ plugins {
 }
 
 group = 'com.mentalresonance.dust'
-version = '1.0.3'
+version = '2.0'
 
 repositories {
     mavenLocal()
@@ -24,15 +24,23 @@ dependencies {
     implementation "org.nanohttpd:nanohttpd:2.3.1"
     implementation "org.nanohttpd:nanohttpd-websocket:2.3.1"
 
-    implementation('com.mentalresonance:dust-core:1.0.3')
+    implementation('com.mentalresonance:dust-core:2.0')
 
-    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'com.google.code.gson:gson:2.13.2'
 }
 
 application {
     mainClass = "com.mentalresonance.dust.demos.dustville.Main"
     applicationDefaultJvmArgs = [
-        '-Xmx16g'
+        '-Xmx16g',
+        '--add-opens=java.base/java.lang=ALL-UNNAMED',
+        '--add-opens=java.base/java.math=ALL-UNNAMED',
+        '--add-opens=java.base/java.util=ALL-UNNAMED',
+        '--add-opens=java.base/java.util.concurrent=ALL-UNNAMED',
+        '--add-opens=java.base/java.net=ALL-UNNAMED',
+        '--add-opens=java.base/java.text=ALL-UNNAMED',
+        '--add-opens=java.sql/java.sql=ALL-UNNAMED',
+        '--add-opens=java.base/java.nio=ALL-UNNAMED'
     ]
 }
 java {
